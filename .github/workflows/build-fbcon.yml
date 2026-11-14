@@ -41,18 +41,8 @@ jobs:
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 \
             "$GITHUB_WORKSPACE/workdir/gcc"
 
-      - name: Enable framebuffer console
-        run: |
-          cd "$GITHUB_WORKSPACE"
-          F=arch/arm64/configs/vendor/eebbk/H7000.config
-          printf '%s\n' \
-            'CONFIG_FRAMEBUFFER_CONSOLE=y' \
-            'CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y' \
-            'CONFIG_VT=y' \
-            'CONFIG_VT_CONSOLE=y' \
-            'CONFIG_DUMMY_CONSOLE=y' >> "$F"
-          tail -n 8 "$F"
-          mkdir -p workdir
+      - name: Prepare workdir
+        run: mkdir -p "$GITHUB_WORKSPACE/workdir"
 
       - name: Build kernel
         run: |
@@ -66,6 +56,10 @@ jobs:
           export KBUILD_BUILD_USER=debug
           export DTB_NAMES="qcom/eebbk/sda660-mtp-H7000"
           make O=out sdm660-perf_defconfig vendor/eebbk/H7000.config vendor/eebbk/sdm660-common.config
+          ./scripts/config --file out/.config -e VT -e VT_CONSOLE -e FRAMEBUFFER_CONSOLE \
+            -e FRAMEBUFFER_CONSOLE_DETECT_PRIMARY -e LOGO -e FB
+          make O=out olddefconfig
+          grep -E 'CONFIG_VT=|CONFIG_FRAMEBUFFER_CONSOLE=|CONFIG_VT_CONSOLE=' out/.config || true
           make -j"$(nproc --all)" O=out KCFLAGS="-Wno-error" 2>&1 | tee kernel.log
           ls -l out/arch/arm64/boot/Image.gz-dtb
 
