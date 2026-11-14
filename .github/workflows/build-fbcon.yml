@@ -1,0 +1,110 @@
+name: Debug fbcon kernel (H7000)
+
+# 诊断用：编一个带 framebuffer console 的 4.4 内核，启动参数加 console=tty0，
+# 这样内核日志（包括 init 的报错）会回放到屏幕上，直接拍照就能看到。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 5
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git automake flex lzop bison gperf build-essential zip curl \
+            zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev \
+            squashfs-tools schedtool dpkg-dev liblz4-tool make optipng \
+            maven libssl-dev libswitch-perl policycoreutils minicom \
+            libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 \
+            lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev \
+            xsltproc unzip device-tree-compiler python3
+
+      - name: Fetch aarch64 gcc 9.3
+        run: |
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 \
+            "$GITHUB_WORKSPACE/workdir/gcc"
+
+      - name: Enable framebuffer console
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          F=arch/arm64/configs/vendor/eebbk/H7000.config
+          printf '%s\n' \
+            'CONFIG_FRAMEBUFFER_CONSOLE=y' \
+            'CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y' \
+            'CONFIG_VT=y' \
+            'CONFIG_VT_CONSOLE=y' \
+            'CONFIG_DUMMY_CONSOLE=y' >> "$F"
+          tail -n 8 "$F"
+          mkdir -p workdir
+
+      - name: Build kernel
+        run: |
+          set -o pipefail
+          cd "$GITHUB_WORKSPACE"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH="$GITHUB_WORKSPACE/workdir/gcc/bin:$PATH"
+          export CROSS_COMPILE="aarch64-linux-"
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER=debug
+          export DTB_NAMES="qcom/eebbk/sda660-mtp-H7000"
+          make O=out sdm660-perf_defconfig vendor/eebbk/H7000.config vendor/eebbk/sdm660-common.config
+          make -j"$(nproc --all)" O=out KCFLAGS="-Wno-error" 2>&1 | tee kernel.log
+          ls -l out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Pack boot image with console=tty0
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          python3 tools/pack_boot.py \
+            --kernel out/arch/arm64/boot/Image.gz-dtb \
+            --ramdisk overlay/boot/ramdisk.gz \
+            --header overlay/boot/header_console.json \
+            --out boot-fbcon.img
+          sha256sum boot-fbcon.img
+
+      - name: Publish to branch
+        if: always()
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          test -f boot-fbcon.img || { echo "no image"; exit 0; }
+          git config user.name "fbcon-ci"
+          git config user.email "fbcon-ci@users.noreply.github.com"
+          git checkout -B fbcon
+          git add -f boot-fbcon.img
+          git commit -m "fbcon debug boot [skip ci]"
+          git push --force origin fbcon
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-fbcon
+          path: boot-fbcon.img
+          if-no-files-found: warn
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-log
+          path: kernel.log
+          if-no-files-found: warn
