@@ -57,7 +57,7 @@ jobs:
           export DTB_NAMES="qcom/eebbk/sda660-mtp-H7000"
           make O=out sdm660-perf_defconfig vendor/eebbk/H7000.config vendor/eebbk/sdm660-common.config
           ./scripts/config --file out/.config -e VT -e VT_CONSOLE -e FRAMEBUFFER_CONSOLE \
-            -e FRAMEBUFFER_CONSOLE_DETECT_PRIMARY -e LOGO -e FB
+            -e FRAMEBUFFER_CONSOLE_DETECT_PRIMARY -e LOGO -e FB -d DUMMY_CONSOLE
           make O=out olddefconfig
           grep -E 'CONFIG_VT=|CONFIG_FRAMEBUFFER_CONSOLE=|CONFIG_VT_CONSOLE=' out/.config || true
           make -j"$(nproc --all)" O=out KCFLAGS="-Wno-error" 2>&1 | tee kernel.log
