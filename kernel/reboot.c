@@ -564,13 +564,23 @@ static int __init h7000_dump_prev_log(void)
 	unsigned long size = 0xe0000UL;
 	void __iomem *va;
 	static char line[220];
-	int i, run = 0, total = 0;
+	int i, run = 0, total = 0, last = 0, startp = 0;
 
 	va = ioremap(phys, size);
 	if (!va)
 		return 0;
-	printk(KERN_ERR "H7000PREVLOG-BEGIN\n");
-	for (i = 0; i < (int)size && total < 60000; i++) {
+	/* find the last byte that still looks like log text, then print the
+	 * last ~100 KB before it (init's failure is at the very end) */
+	for (i = 0; i < (int)size; i++) {
+		unsigned char c = readb(va + i);
+		if ((c >= 0x20 && c < 0x7f) || c == '\n' || c == '\t')
+			last = i;
+	}
+	startp = last - 100000;
+	if (startp < 0)
+		startp = 0;
+	printk(KERN_ERR "H7000PREVLOG-BEGIN last=%d start=%d\n", last, startp);
+	for (i = startp; i <= last && total < 190000; i++) {
 		unsigned char c = readb(va + i);
 		if (c >= 0x20 && c < 0x7f) {
 			line[run++] = c;
@@ -598,3 +608,4 @@ static int __init h7000_dump_prev_log(void)
 	return 0;
 }
 late_initcall(h7000_dump_prev_log);
+
