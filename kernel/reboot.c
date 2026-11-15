@@ -221,6 +221,7 @@ void kernel_restart(char *cmd)
 	else
 		pr_emerg("Restarting system with command '%s'\n", cmd);
 	kmsg_dump(KMSG_DUMP_RESTART);
+	h7000_restart_mark("kernel_restart");
 	machine_restart(cmd);
 }
 EXPORT_SYMBOL_GPL(kernel_restart);
@@ -611,3 +612,34 @@ static int __init h7000_dump_prev_log(void)
 	return 0;
 }
 late_initcall(h7000_dump_prev_log);
+
+/* ---- H7000 heartbeat (v5) ---- */
+#include <linux/kthread.h>
+#include <linux/delay.h>
+#include <linux/ktime.h>
+
+static struct task_struct *h7000_hb_task;
+
+static int h7000_heartbeat(void *unused)
+{
+	while (!kthread_should_stop()) {
+		u64 us = ktime_to_us(ktime_get());
+		printk(KERN_ERR "H7000ALIVE uptime=%u.%03u\n",
+		       (unsigned)(us / 1000000ULL),
+		       (unsigned)((us / 1000ULL) % 1000ULL));
+		msleep(1000);
+	}
+	return 0;
+}
+
+static int __init h7000_hb_init(void)
+{
+	h7000_hb_task = kthread_run(h7000_heartbeat, NULL, "h7000hb");
+	return 0;
+}
+late_initcall(h7000_hb_init);
+
+void h7000_restart_mark(const char *why)
+{
+	printk(KERN_ERR "H7000RESTART %s\n", why);
+}
