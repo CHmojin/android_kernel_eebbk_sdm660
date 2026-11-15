@@ -320,6 +320,9 @@ void __init setup_arch(char **cmdline_p)
 
 	setup_machine_fdt(__fdt_pointer);
 
+	/* H7000: keep the ramoops area (DTS node has size 0) */
+	memblock_reserve(0xa0119000, 0xe0000);
+
 	parse_early_param();
 
 	/*
