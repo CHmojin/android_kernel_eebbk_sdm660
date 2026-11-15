@@ -211,6 +211,8 @@ void migrate_to_reboot_cpu(void)
  *	Shutdown everything and perform a clean reboot.
  *	This is not safe to call in interrupt context.
  */
+void h7000_restart_mark(const char *why);
+
 void kernel_restart(char *cmd)
 {
 	kernel_restart_prepare(cmd);
@@ -615,6 +617,7 @@ late_initcall(h7000_dump_prev_log);
 
 /* ---- H7000 heartbeat (v5) ---- */
 #include <linux/kthread.h>
+#include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/ktime.h>
 
