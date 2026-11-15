@@ -555,3 +555,46 @@ static int __init reboot_setup(char *str)
 	return 1;
 }
 __setup("reboot=", reboot_setup);
+
+/* ---- H7000: dump the previous boot's log from the ramoops reserved area ---- */
+#include <linux/io.h>
+static int __init h7000_dump_prev_log(void)
+{
+	unsigned long phys = 0xa0119000UL;
+	unsigned long size = 0xe0000UL;
+	void __iomem *va;
+	static char line[220];
+	int i, run = 0, total = 0;
+
+	va = ioremap(phys, size);
+	if (!va)
+		return 0;
+	printk(KERN_ERR "H7000PREVLOG-BEGIN\n");
+	for (i = 0; i < (int)size && total < 60000; i++) {
+		unsigned char c = readb(va + i);
+		if (c >= 0x20 && c < 0x7f) {
+			line[run++] = c;
+			if (run >= (int)sizeof(line) - 1) {
+				line[run] = 0;
+				printk(KERN_ERR "H7|%s\n", line);
+				total += run;
+				run = 0;
+			}
+		} else {
+			if (run >= 8) {
+				line[run] = 0;
+				printk(KERN_ERR "H7|%s\n", line);
+				total += run;
+			}
+			run = 0;
+		}
+	}
+	if (run >= 8) {
+		line[run] = 0;
+		printk(KERN_ERR "H7|%s\n", line);
+	}
+	printk(KERN_ERR "H7000PREVLOG-END\n");
+	iounmap(va);
+	return 0;
+}
+late_initcall(h7000_dump_prev_log);
