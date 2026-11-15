@@ -646,3 +646,75 @@ void h7000_restart_mark(const char *why)
 {
 	printk(KERN_ERR "H7000RESTART %s\n", why);
 }
+
+/* ---- H7000: 1 Hz kernel log -> logfs partition (v6) ---- */
+#include <linux/kmsg_dump.h>
+#include <linux/blkdev.h>
+#include <linux/buffer_head.h>
+#include <linux/fs.h>
+#include <linux/vmalloc.h>
+
+#define H7_LOGPART	MKDEV(179, 37)	/* mmcblk0p37 = logfs, 8 MiB, unused */
+#define H7_BUF_SIZE	(192 * 1024)
+
+static char *h7_buf;
+static struct kmsg_dumper h7_dumper;
+
+static void h7_flash_write(const char *buf, size_t len)
+{
+	struct block_device *bdev;
+	size_t i;
+
+	if (!len)
+		return;
+	bdev = blkdev_get_by_dev(H7_LOGPART, FMODE_WRITE, NULL);
+	if (IS_ERR_OR_NULL(bdev))
+		return;
+	for (i = 0; i < len; i += 4096) {
+		struct buffer_head *bh = __getblk(bdev, (sector_t)(i >> 9), 4096);
+		size_t n = min_t(size_t, 4096, len - i);
+
+		if (!bh)
+			break;
+		memset(bh->b_data, 0, 4096);
+		memcpy(bh->b_data, buf + i, n);
+		set_buffer_uptodate(bh);
+		mark_buffer_dirty(bh);
+		sync_dirty_buffer(bh);
+		brelse(bh);
+	}
+	blkdev_put(bdev, FMODE_WRITE);
+}
+
+static void h7_dump_cb(struct kmsg_dumper *dumper, enum kmsg_dump_reason reason)
+{
+	size_t len = 0;
+
+	if (!h7_buf)
+		return;
+	if (!kmsg_dump_get_buffer(dumper, false, h7_buf, H7_BUF_SIZE - 1, &len))
+		return;
+	h7_buf[len] = 0;
+	h7_flash_write(h7_buf, len);
+}
+
+static int h7_flashlog_thread(void *unused)
+{
+	while (!kthread_should_stop()) {
+		kmsg_dump(KMSG_DUMP_OOPS);
+		msleep(1000);
+	}
+	return 0;
+}
+
+static int __init h7_flashlog_init(void)
+{
+	h7_buf = vmalloc(H7_BUF_SIZE);
+	if (!h7_buf)
+		return -ENOMEM;
+	h7_dumper.dump = h7_dump_cb;
+	kmsg_dump_register(&h7_dumper);
+	kthread_run(h7_flashlog_thread, NULL, "h7flashlog");
+	return 0;
+}
+late_initcall(h7_flashlog_init);
