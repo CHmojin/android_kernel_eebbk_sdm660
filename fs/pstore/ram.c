@@ -301,7 +301,8 @@ static int notrace ramoops_pstore_write_buf(enum pstore_type_id type,
 	 * to only store crash logs, rather than storing general kernel logs.
 	 */
 	if (reason != KMSG_DUMP_OOPS &&
-	    reason != KMSG_DUMP_PANIC)
+	    reason != KMSG_DUMP_PANIC &&
+	    reason != KMSG_DUMP_RESTART)
 		return -EINVAL;
 
 	/* Skip Oopes when configured to do so. */
