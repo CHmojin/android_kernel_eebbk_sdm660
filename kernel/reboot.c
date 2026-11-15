@@ -564,51 +564,49 @@ static int __init h7000_dump_prev_log(void)
 	unsigned long size = 0xe0000UL;
 	void __iomem *va;
 	static char line[220];
-	int i, run = 0, total = 0, lastinit = -1, startp = 0, endp = 0;
+	int i, run = 0, total = 0, shown = 0, lastinit = -1;
 
 	va = ioremap(phys, size);
 	if (!va)
 		return 0;
-	/* find the LAST "init:" in the area: that is where Android init logged */
+
 	for (i = 0; i + 5 < (int)size; i++) {
 		if (readb(va + i) == 'i' && readb(va + i + 1) == 'n' &&
 		    readb(va + i + 2) == 'i' && readb(va + i + 3) == 't' &&
 		    readb(va + i + 4) == ':')
 			lastinit = i;
 	}
-	if (lastinit < 0)
-		lastinit = (int)size - 1;
-	startp = lastinit - 80000;
-	if (startp < 0)
-		startp = 0;
-	endp = lastinit + 40000;
-	if (endp > (int)size)
-		endp = (int)size;
-	printk(KERN_ERR "H7000PREVLOG-BEGIN init_at=%d start=%d end=%d\n", lastinit, startp, endp);
-	for (i = startp; i < endp && total < 190000; i++) {
+	printk(KERN_ERR "H7000PREVLOG-BEGIN init_at=%d\n", lastinit);
+
+	for (i = 0; i < (int)size && total < 190000; i++) {
 		unsigned char c = readb(va + i);
 		if (c >= 0x20 && c < 0x7f) {
 			line[run++] = c;
 			if (run >= (int)sizeof(line) - 1) {
 				line[run] = 0;
-				printk(KERN_ERR "H7|%s\n", line);
-				total += run;
+				if (!strstr(line, "H7|")) {
+					printk(KERN_ERR "H7|%s\n", line);
+					total += run; shown++;
+				}
 				run = 0;
 			}
 		} else {
 			if (run >= 8) {
 				line[run] = 0;
-				printk(KERN_ERR "H7|%s\n", line);
-				total += run;
+				if (!strstr(line, "H7|")) {
+					printk(KERN_ERR "H7|%s\n", line);
+					total += run; shown++;
+				}
 			}
 			run = 0;
 		}
 	}
 	if (run >= 8) {
 		line[run] = 0;
-		printk(KERN_ERR "H7|%s\n", line);
+		if (!strstr(line, "H7|"))
+			printk(KERN_ERR "H7|%s\n", line);
 	}
-	printk(KERN_ERR "H7000PREVLOG-END\n");
+	printk(KERN_ERR "H7000PREVLOG-END lines=%d bytes=%d\n", shown, total);
 	iounmap(va);
 	return 0;
 }
