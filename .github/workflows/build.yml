@@ -58,8 +58,8 @@ jobs:
 
       - name: Build h7pin helper
         run: |
-          export PATH="/workdir/gcc/bin/:"
-          cd /workdir/source
+          export PATH="$GITHUB_WORKSPACE/workdir/gcc/bin/:$PATH"
+          cd $GITHUB_WORKSPACE/workdir/source
           aarch64-linux-gcc -O2 -static -nostdlib -ffreestanding -o h7pin tools/h7pin.c
           ls -l h7pin
 
