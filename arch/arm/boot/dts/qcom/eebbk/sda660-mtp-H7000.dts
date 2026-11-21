@@ -29,15 +29,15 @@
 	/* ramoops: console 256KB / record 64KB / pmsg 128KB */
 	reserved-memory {
 		ramoops_region: ramoops_region@a0119000 {
-			compatible = "ramoops";
 			no-map;
 			reg = <0x0 0xa0119000 0x0 0xe0000>;
 		};
 	};
 
+	/* 4.4 ramoops driver: reg + single-cell sizes on the same node */
 	ramoops {
 		compatible = "ramoops";
-		memory-region = <&ramoops_region>;
+		reg = <0x0 0xa0119000 0x0 0xe0000>;
 		record-size = <0x10000>;
 		console-size = <0x40000>;
 		pmsg-size = <0x20000>;
