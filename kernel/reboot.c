@@ -749,3 +749,27 @@ static int __init h7_flashlog_init(void)
 	return 0;
 }
 late_initcall(h7_flashlog_init);
+
+
+/* ---- H7000: report a kernel version new enough for Android 14+ netd ----
+ * libnetd_updatable.so refuses to run on kernels older than 4.14 on SDK >= 34
+ * ("U+ platform with kernel version < 4.14.0 is unsupported") and aborts, which
+ * leaves SystemServer waiting for netd forever.  Only the *reported* version is
+ * changed; LINUX_VERSION_CODE stays at 4.4 so no driver behaviour changes.
+ */
+#include <linux/utsname.h>
+#include <linux/version.h>
+
+static int __init h7_fake_kernel_version(void)
+{
+	const char *fake = "4.14.999-perf-g4.14.999";
+	size_t n = strlen(fake);
+
+	if (n >= sizeof(init_uts_ns.name.release))
+		n = sizeof(init_uts_ns.name.release) - 1;
+	memcpy(init_uts_ns.name.release, fake, n);
+	init_uts_ns.name.release[n] = 0;
+	pr_info("H7000: reported kernel release faked to %s\n", init_uts_ns.name.release);
+	return 0;
+}
+late_initcall(h7_fake_kernel_version);
