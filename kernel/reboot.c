@@ -654,7 +654,8 @@ void h7000_restart_mark(const char *why)
 #include <linux/fs.h>
 #include <linux/vmalloc.h>
 
-#define H7_LOGPART	MKDEV(179, 37)	/* mmcblk0p37 = logfs, 8 MiB, unused */
+/* block major is dynamic on this kernel: look up by name */
+#define H7_LOGPART_NAME	"mmcblk0p37"	/* mmcblk0p37 = logfs, 8 MiB, unused */
 #define H7_BUF_SIZE	(192 * 1024)
 
 static char *h7_buf;
@@ -667,7 +668,11 @@ static void h7_flash_write(const char *buf, size_t len)
 
 	if (!len)
 		return;
-	bdev = blkdev_get_by_dev(H7_LOGPART, FMODE_WRITE, NULL);
+	dev_t dev = blk_lookup_devt(H7_LOGPART_NAME, 0);
+
+	if (!dev)
+		return;
+	bdev = blkdev_get_by_dev(dev, FMODE_WRITE, NULL);
 	if (IS_ERR_OR_NULL(bdev))
 		return;
 	for (i = 0; i < len; i += 4096) {
