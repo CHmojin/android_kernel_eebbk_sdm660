@@ -652,11 +652,31 @@ void h7000_restart_mark(const char *why)
 #include <linux/blkdev.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
+#include <linux/device.h>
 #include <linux/vmalloc.h>
 
 /* block major is dynamic on this kernel: look up by name */
 #define H7_LOGPART_NAME	"mmcblk0p37"	/* mmcblk0p37 = logfs, 8 MiB, unused */
 #define H7_BUF_SIZE	(192 * 1024)
+
+
+/* find a block device dev_t by exact name (e.g. mmcblk0p37) */
+static dev_t h7_find_blkdev(const char *name)
+{
+	struct class_dev_iter iter;
+	struct device *dev;
+	dev_t ret = 0;
+
+	class_dev_iter_init(&iter, &block_class, NULL, NULL);
+	while ((dev = class_dev_iter_next(&iter))) {
+		if (!strcmp(dev_name(dev), name)) {
+			ret = dev->devt;
+			break;
+		}
+	}
+	class_dev_iter_exit(&iter);
+	return ret;
+}
 
 static char *h7_buf;
 static bool h7_logged;
@@ -669,7 +689,7 @@ static void h7_flash_write(const char *buf, size_t len)
 
 	if (!len)
 		return;
-	dev_t dev = blk_lookup_devt("mmcblk0", 37);   /* disk name + partition number */
+	dev_t dev = h7_find_blkdev(H7_LOGPART_NAME);
 
 	if (dev && !h7_logged)
 		printk(KERN_ERR "H7000LOGF: logfs dev=%u:%u\n", MAJOR(dev), MINOR(dev));
