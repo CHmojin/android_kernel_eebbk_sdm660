@@ -659,6 +659,7 @@ void h7000_restart_mark(const char *why)
 #define H7_BUF_SIZE	(192 * 1024)
 
 static char *h7_buf;
+static bool h7_logged;
 static struct kmsg_dumper h7_dumper;
 
 static void h7_flash_write(const char *buf, size_t len)
@@ -668,11 +669,16 @@ static void h7_flash_write(const char *buf, size_t len)
 
 	if (!len)
 		return;
-	dev_t dev = blk_lookup_devt(H7_LOGPART_NAME, 0);
+	dev_t dev = blk_lookup_devt("mmcblk0", 37);   /* disk name + partition number */
+
+	if (dev && !h7_logged)
+		printk(KERN_ERR "H7000LOGF: logfs dev=%u:%u\n", MAJOR(dev), MINOR(dev));
 
 	if (!dev)
 		return;
 	bdev = blkdev_get_by_dev(dev, FMODE_WRITE, NULL);
+	if (!IS_ERR_OR_NULL(bdev))
+		h7_logged = true;
 	if (IS_ERR_OR_NULL(bdev))
 		return;
 	for (i = 0; i < len; i += 4096) {
