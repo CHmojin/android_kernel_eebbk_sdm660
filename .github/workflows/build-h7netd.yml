@@ -72,8 +72,22 @@ jobs:
           mkdir -p out
           javac -d out/classes $(find src -name '*.java')
           ls -R out/classes | head -20
-          curl -sSL -o r8.jar https://storage.googleapis.com/r8-releases/raw/master/r8.jar
-          ls -l r8.jar
+          # fetch r8 (contains D8) from several known locations, verify size
+          for url in \
+            "https://storage.googleapis.com/r8-releases/raw/8.2.42/r8.jar" \
+            "https://storage.googleapis.com/r8-releases/raw/master/r8.jar" \
+            "https://maven.google.com/com/android/tools/r8/8.2.42/r8-8.2.42.jar" \
+            "https://github.com/line/line-android/raw/master/r8.jar" ; do
+            echo "trying $url"
+            curl -sSL --max-time 120 -o r8.jar "$url" || true
+            sz=$(stat -c%s r8.jar 2>/dev/null || echo 0)
+            echo "  size=$sz"
+            if [ "$sz" -gt 1000000 ]; then break; fi
+          done
+          sz=$(stat -c%s r8.jar 2>/dev/null || echo 0)
+          if [ "$sz" -lt 1000000 ]; then
+            echo "could not fetch r8.jar (size $sz)"; head -c 300 r8.jar; exit 1
+          fi
           java -cp r8.jar com.android.tools.r8.D8 \
             --release --min-api 35 --output out \
             out/classes/h7netd/H7NetdStub.class
