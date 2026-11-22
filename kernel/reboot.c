@@ -733,7 +733,7 @@ static int h7_flashlog_thread(void *unused)
 {
 	while (!kthread_should_stop()) {
 		kmsg_dump(KMSG_DUMP_OOPS);
-		msleep(30);
+		msleep(5);
 	}
 	return 0;
 }
