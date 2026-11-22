@@ -1,11 +1,10 @@
-/* h7pin — create /sys/fs/bpf (needs a writable mountpoint on top of sysfs), mount
- * bpffs, and pin the trivial BPF socket filters netd expects.
+/* h7pin — wait for init to mount bpffs at /sys/fs/bpf, then pin the trivial BPF
+ * socket filters netd expects.
  *
- * /sys is sysfs (read-only), so mkdir("/sys/fs/bpf") fails.  We put a tmpfs over
- * /sys/fs to get a writable directory, then mount bpffs inside it.  init mounts
- * selinuxfs under /sys/fs later, which works fine on top of our tmpfs.
- *
- * Runs in the background with retries so it also survives init re-mounting things.
+ * init already mounts bpffs (verified: "bpf on /sys/fs/bpf type bpf"), so we must NOT
+ * put a tmpfs over /sys/fs - doing so hides init's mount and everything after it goes
+ * to the wrong place.  We simply retry mkdir("/sys/fs/bpf/netd_shared") until it works
+ * (0 or EEXIST) and then load+pin, retrying until all six programs are pinned.
  *
  * Build: aarch64-linux-gcc -O2 -static -nostdlib -ffreestanding -o h7pin tools/h7pin.c
  */
@@ -15,7 +14,6 @@ typedef unsigned int u32;
 #define SYS_write 64
 #define SYS_exit_group 94
 #define SYS_mkdirat 34
-#define SYS_mount 40
 #define SYS_close 57
 #define SYS_nanosleep 101
 #define SYS_bpf 280
@@ -27,6 +25,7 @@ typedef unsigned int u32;
 #define AT_FDCWD -100
 #define SZ_PROG_LOAD 40
 #define SZ_OBJ_PIN 16
+#define EEXIST 17
 
 struct timespec {
 	long tv_sec;
@@ -57,17 +56,6 @@ static inline long sc3(long n, long a, long b, long c)
 	register long x1 __asm__("x1") = b;
 	register long x2 __asm__("x2") = c;
 	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory");
-	return x0;
-}
-
-static inline long sc4(long n, long a, long b, long c, long d)
-{
-	register long x8 __asm__("x8") = n;
-	register long x0 __asm__("x0") = a;
-	register long x1 __asm__("x1") = b;
-	register long x2 __asm__("x2") = c;
-	register long x3 __asm__("x3") = d;
-	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory");
 	return x0;
 }
 
@@ -154,34 +142,14 @@ static const char *PATHS[] = {
 	"/sys/fs/bpf/netd_shared/prog_netd_setsockopt_prog",
 };
 
-static void setup_bpffs(void)
-{
-	long r;
-
-	/* sysfs is read-only: put a tmpfs over /sys/fs so we can create the mountpoint */
-	r = sc2(SYS_mkdirat, AT_FDCWD, (long)"/sys/fs/bpf");
-	if (r < 0) {
-		r = sc4(SYS_mount, (long)"tmpfs", (long)"/sys/fs", (long)"tmpfs", 0);
-		saynum("h7pin: tmpfs on /sys/fs -> ", r);
-		sc2(SYS_mkdirat, AT_FDCWD, (long)"/sys/fs/bpf");
-	}
-	/* mount bpffs (ignore EBUSY if init already did it) */
-	r = sc4(SYS_mount, (long)"bpf", (long)"/sys/fs/bpf", (long)"bpf", 0);
-	if (r < 0)
-		saynum("h7pin: mount bpf -> ", r);
-	else
-		say("h7pin: mounted bpffs\n");
-	sc2(SYS_mkdirat, AT_FDCWD, (long)"/sys/fs/bpf/netd_shared");
-}
-
-static int try_pin_all(void)
+static int pin_all(void)
 {
 	static struct bpf_insn insns[2];
 	union bpf_attr attr;
 	unsigned long i;
 	int ok = 0;
 
-	insns[0].code = 0xb7;	/* r0 = -1 ; exit  (accept everything) */
+	insns[0].code = 0xb7;
 	insns[0].dst_reg = 0;
 	insns[0].src_reg = 0;
 	insns[0].off = 0;
@@ -202,8 +170,10 @@ static int try_pin_all(void)
 		attr.insns = (u64)(unsigned long)insns;
 		attr.license = (u64)(unsigned long)"GPL";
 		fd = sc3(SYS_bpf, BPF_PROG_LOAD, (long)&attr, SZ_PROG_LOAD);
-		if (fd < 0)
+		if (fd < 0) {
+			saynum("h7pin: load errno ", -fd);
 			continue;
+		}
 		for (unsigned long k = 0; k < sizeof(attr); k++)
 			((char *)&attr)[k] = 0;
 		attr.pathname = (u64)(unsigned long)PATHS[i];
@@ -212,9 +182,9 @@ static int try_pin_all(void)
 		sc1(SYS_close, fd);
 		if (ret == 0) {
 			ok++;
-			say("h7pin: pinned ");
+		} else {
+			saynum("h7pin: pin errno ", -ret);
 			say(PATHS[i]);
-			say("\n");
 		}
 	}
 	return ok;
@@ -223,18 +193,29 @@ static int try_pin_all(void)
 void _start(void)
 {
 	int attempt;
+	long r;
 
 	say("h7pin: start\n");
-	for (attempt = 0; attempt < 40; attempt++) {
-		int ok;
 
-		setup_bpffs();
-		ok = try_pin_all();
+	/* wait (up to ~60 s) for init to mount bpffs and give us a writable mountpoint */
+	for (attempt = 0; attempt < 200; attempt++) {
+		r = sc2(SYS_mkdirat, AT_FDCWD, (long)"/sys/fs/bpf/netd_shared");
+		if (r == 0 || r == -EEXIST)
+			break;
+		if (attempt % 20 == 0)
+			saynum("h7pin: waiting for bpffs, mkdir -> ", -r);
+		sleep_ms(300);
+	}
+	saynum("h7pin: mountpoint ready, mkdir rc ", -r);
+
+	for (attempt = 0; attempt < 60; attempt++) {
+		int ok = pin_all();
+
 		if (ok == (int)(sizeof(PATHS) / sizeof(PATHS[0]))) {
 			say("h7pin: done (all pinned)\n");
 			break;
 		}
-		saynum("h7pin: attempt pinned ", ok);
+		saynum("h7pin: pinned so far ", ok);
 		sleep_ms(500);
 	}
 	sc1(SYS_exit_group, 0);
