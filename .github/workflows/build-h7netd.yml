@@ -1,0 +1,100 @@
+name: Build h7netd stub dex (fake netd binder service)
+
+# Builds a tiny dex that registers a dummy binder service named "netd", so
+# SystemServer's ServiceManager.getService("netd") returns instead of blocking
+# (ColorOS 15 / Android 15 requires a >=4.14 kernel for the real netd).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-h7netd.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install JDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openjdk-17-jdk-headless
+
+      - name: Generate sources
+        run: |
+          mkdir -p src/android/os src/h7netd
+          cat > src/android/os/IBinder.java <<'EOF'
+          package android.os;
+          public interface IBinder { }
+          EOF
+          cat > src/android/os/Binder.java <<'EOF'
+          package android.os;
+          public class Binder implements IBinder {
+              public Binder() { }
+          }
+          EOF
+          cat > src/android/os/ServiceManager.java <<'EOF'
+          package android.os;
+          public class ServiceManager {
+              public static void addService(String name, IBinder service) { throw new RuntimeException("stub"); }
+              public static void addService(String name, IBinder service, boolean allowIsolated) { throw new RuntimeException("stub"); }
+              public static IBinder getService(String name) { throw new RuntimeException("stub"); }
+              public static String[] listServices() { throw new RuntimeException("stub"); }
+          }
+          EOF
+          cat > src/h7netd/H7NetdStub.java <<'EOF'
+          package h7netd;
+
+          import android.os.Binder;
+          import android.os.ServiceManager;
+
+          public class H7NetdStub {
+              public static void main(String[] args) throws Exception {
+                  ServiceManager.addService("netd", new Binder());
+                  System.out.println("h7netd: registered fake 'netd' binder");
+                  System.out.flush();
+                  Thread.sleep(Long.MAX_VALUE);
+              }
+          }
+          EOF
+          find src -name '*.java' | sort
+
+      - name: Compile and dex
+        run: |
+          mkdir -p out
+          javac -d out/classes $(find src -name '*.java')
+          ls -R out/classes | head -20
+          curl -sSL -o r8.jar https://storage.googleapis.com/r8-releases/raw/master/r8.jar
+          ls -l r8.jar
+          java -cp r8.jar com.android.tools.r8.D8 \
+            --release --min-api 35 --output out \
+            out/classes/h7netd/H7NetdStub.class
+          ls -l out
+          sha256sum out/classes.dex
+
+      - name: Publish to h7netd-artifact branch
+        if: always()
+        run: |
+          set -e
+          test -f out/classes.dex || { echo "no dex, skip"; exit 0; }
+          cp out/classes.dex h7netd.dex
+          git config user.name "h7000-ci"
+          git config user.email "h7000-ci@users.noreply.github.com"
+          git checkout -B h7netd-artifact
+          git add -f h7netd.dex
+          git commit -m "h7netd.dex from run ${{ github.run_id }} [skip ci]"
+          git push --force origin h7netd-artifact
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: h7netd
+          path: out/classes.dex
